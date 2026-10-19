@@ -1,0 +1,166 @@
+# Connections between hubs: (hub A, hub B, distance in km).
+ROUTES = [
+    ("Delhi", "Jaipur", 280),
+    ("Delhi", "Nagpur", 1050),
+    ("Delhi", "Kolkata", 1500),
+    ("Jaipur", "Ahmedabad", 650),
+    ("Ahmedabad", "Mumbai", 530),
+    ("Mumbai", "Nagpur", 830),
+    ("Mumbai", "Hyderabad", 710),
+    ("Nagpur", "Hyderabad", 500),
+    ("Nagpur", "Kolkata", 1100),
+    ("Hyderabad", "Bengaluru", 570),
+    ("Hyderabad", "Chennai", 630),
+    ("Bengaluru", "Chennai", 350),
+    ("Kolkata", "Chennai", 1670),
+]
+
+# speed (km/h), handling fixed hours (loading/transfers),
+# cost (Rs per tonne-km), co2 (grams per tonne-km)
+MODES = {
+    "Air": {"speed": 700, "handling": 6, "cost": 12.0, "co2": 600},
+    "Rail": {"speed": 45, "handling": 12, "cost": 1.2, "co2": 25},
+    "Road": {"speed": 40, "handling": 3, "cost": 2.5, "co2": 90},
+}
+
+# Build the map: every hub -> list of (neighbour, km)
+GRAPH = {}
+for a, b, km in ROUTES:
+    GRAPH.setdefault(a, []).append((b, km))
+    GRAPH.setdefault(b, []).append((a, km))
+# 2. CORE LOGIC
+def leg_stats(km, mode, tonnes):
+    """Time (hrs), cost (Rs), and CO2 (kg) for one leg using one mode."""
+    m = MODES[mode]
+    time = km / m["speed"] + m["handling"]
+    cost = km * tonnes * m["cost"]
+    co2 = (km * tonnes * m["co2"]) / 1000.0
+    return time, cost, co2
+
+
+def find_paths(current, end, path):
+    """Recursively find every route from current hub to end hub without cycles."""
+    if current == end:
+        return [path]
+    found = []
+    for nxt, _ in GRAPH[current]:
+        if nxt not in path:
+            found += find_paths(nxt, end, path + [nxt])
+    return found
+
+
+def distance(a, b):
+    """Retrieve distance between two directly connected hubs."""
+    for nxt, km in GRAPH[a]:
+        if nxt == b:
+            return km
+    return 0
+
+
+def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
+    """Return the optimal route plan for the given priority weights."""
+    max_t = max_c = max_e = 0.0
+
+    # Determine maximum values across all legs and modes for normalization
+    for a, b, km in ROUTES:
+        for mode in MODES:
+            t, c, e = leg_stats(km, mode, tonnes)
+            max_t = max(max_t, t)
+            max_c = max(max_c, c)
+            max_e = max(max_e, e)
+
+    best = None
+
+    for path in find_paths(src, dst, [src]):
+        legs = []
+        tot_t = tot_c = tot_e = tot_score = 0.0
+
+        for i in range(len(path) - 1):
+            km = distance(path[i], path[i + 1])
+            choice = None
+
+            # Find the best mode for the current leg
+            for mode in MODES:
+                t, c, e = leg_stats(km, mode, tonnes)
+                score = (w_co2 * e / max_e) + (w_cost * c / max_c) + (w_speed * t / max_t)
+                if choice is None or score < choice[0]:
+                    choice = (score, mode, t, c, e)
+
+            score, mode, t, c, e = choice
+            legs.append((path[i], path[i + 1], km, mode))
+            tot_t += t
+            tot_c += c
+            tot_e += e
+            tot_score += score
+
+        if best is None or tot_score < best["score"]:
+            best = {
+                "path": path,
+                "legs": legs,
+                "time": tot_t,
+                "cost": tot_c,
+                "co2": tot_e,
+                "score": tot_score,
+            }
+
+def ask_weights():
+    print("\nEnter your priorities as percentages (they must total 100).")
+    while True:
+        try:
+            co2 = float(input("Carbon reduction %: "))
+            cost = float(input("Low cost %: "))
+            speed = float(input("Delivery speed %: "))
+        except ValueError:
+            print("Please type numbers only.")
+            continue
+
+        if abs((co2 + cost + speed) - 100.0) < 0.01:
+            return co2 / 100.0, cost / 100.0, speed / 100.0
+        print("Total must be exactly 100. Try again.")
+
+
+def show(title, plan):
+    print("\n" + title)
+    print("Route:", " -> ".join(plan["path"]))
+    for a, b, km, mode in plan["legs"]:
+        print(f"  {a} -> {b} ({km} km) by {mode}")
+    print(f"  Time: {plan['time']:.1f} hrs | Cost: Rs {plan['cost']:,.0f} | CO2: {plan['co2']:,.0f} kg")
+
+
+def main():
+    print("=== EcoTransit: Green Freight Router ===")
+    hubs = sorted(GRAPH.keys())
+    print("Hubs:", ", ".join(hubs))
+
+    src = input("From hub: ").strip().title()
+    dst = input("To hub: ").strip().title()
+
+    if src not in GRAPH or dst not in GRAPH or src == dst:
+        print("Invalid hubs.")
+        return
+
+    try:
+        tonnes = float(input("Shipment weight (tonnes): "))
+    except ValueError:
+        print("Invalid shipment weight.")
+        return
+
+    w_co2, w_cost, w_speed = ask_weights()
+
+    eco = plan_route(src, dst, tonnes, w_co2, w_cost, w_speed)
+    fast = plan_route(src, dst, tonnes, 0, 0, 1)  # Speed-only baseline
+
+    show("FASTEST-ONLY PLAN (what most companies do)", fast)
+    show("YOUR OPTIMIZED ECOTRANSIT PLAN", eco)
+
+    saved = fast["co2"] - eco["co2"]
+    pct = (saved / fast["co2"] * 100.0) if fast["co2"] else 0.0
+    time_diff = eco["time"] - fast["time"]
+    cost_diff = eco["cost"] - fast["cost"]
+
+    print(f"\nCO2 saved: {saved:,.0f} kg ({pct:.0f}% less)")
+    print(f"Extra time: {time_diff:.1f} hrs | Cost difference: Rs {cost_diff:,.0f}")
+
+
+if __name__ == "__main__":
+    main()
