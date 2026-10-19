@@ -2,9 +2,7 @@
 Balances carbon, cost, and speed across Air / Rail / Road for every leg.
 """
 
-# ==========================================
 # 1. DATA
-# ==========================================
 
 ROUTES = [
     ("Delhi", "Jaipur", 280),
@@ -35,9 +33,8 @@ for a, b, km in ROUTES:
     GRAPH.setdefault(b, []).append((a, km))
 
 
-# ==========================================
 # 2. CORE LOGIC
-# ==========================================
+
 
 def leg_stats(km, mode, tonnes):
     """Time (hrs), cost (Rs), and CO2 (kg) for one leg using one mode."""
@@ -118,9 +115,7 @@ def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
     return best
 
 
-# ==========================================
 # 3. USER INTERFACE
-# ==========================================
 
 def ask_weights():
     print("\nEnter your priorities as percentages (they must total 100).")
