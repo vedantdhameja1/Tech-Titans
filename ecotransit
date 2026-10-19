@@ -1,4 +1,11 @@
-# Connections between hubs: (hub A, hub B, distance in km).
+"""EcoTransit Intermodal Green Freight Router (console version)
+Balances carbon, cost, and speed across Air / Rail / Road for every leg.
+"""
+
+# ==========================================
+# 1. DATA
+# ==========================================
+
 ROUTES = [
     ("Delhi", "Jaipur", 280),
     ("Delhi", "Nagpur", 1050),
@@ -15,20 +22,23 @@ ROUTES = [
     ("Kolkata", "Chennai", 1670),
 ]
 
-# speed (km/h), handling fixed hours (loading/transfers),
-# cost (Rs per tonne-km), co2 (grams per tonne-km)
 MODES = {
     "Air": {"speed": 700, "handling": 6, "cost": 12.0, "co2": 600},
     "Rail": {"speed": 45, "handling": 12, "cost": 1.2, "co2": 25},
     "Road": {"speed": 40, "handling": 3, "cost": 2.5, "co2": 90},
 }
 
-# Build the map: every hub -> list of (neighbour, km)
+# Ensure bi-directional graph
 GRAPH = {}
 for a, b, km in ROUTES:
     GRAPH.setdefault(a, []).append((b, km))
     GRAPH.setdefault(b, []).append((a, km))
+
+
+# ==========================================
 # 2. CORE LOGIC
+# ==========================================
+
 def leg_stats(km, mode, tonnes):
     """Time (hrs), cost (Rs), and CO2 (kg) for one leg using one mode."""
     m = MODES[mode]
@@ -43,7 +53,7 @@ def find_paths(current, end, path):
     if current == end:
         return [path]
     found = []
-    for nxt, _ in GRAPH[current]:
+    for nxt, _ in GRAPH.get(current, []):
         if nxt not in path:
             found += find_paths(nxt, end, path + [nxt])
     return found
@@ -51,7 +61,7 @@ def find_paths(current, end, path):
 
 def distance(a, b):
     """Retrieve distance between two directly connected hubs."""
-    for nxt, km in GRAPH[a]:
+    for nxt, km in GRAPH.get(a, []):
         if nxt == b:
             return km
     return 0
@@ -61,7 +71,6 @@ def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
     """Return the optimal route plan for the given priority weights."""
     max_t = max_c = max_e = 0.0
 
-    # Determine maximum values across all legs and modes for normalization
     for a, b, km in ROUTES:
         for mode in MODES:
             t, c, e = leg_stats(km, mode, tonnes)
@@ -69,9 +78,13 @@ def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
             max_c = max(max_c, c)
             max_e = max(max_e, e)
 
+    paths = find_paths(src, dst, [src])
+    if not paths:
+        return None
+
     best = None
 
-    for path in find_paths(src, dst, [src]):
+    for path in paths:
         legs = []
         tot_t = tot_c = tot_e = tot_score = 0.0
 
@@ -79,7 +92,6 @@ def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
             km = distance(path[i], path[i + 1])
             choice = None
 
-            # Find the best mode for the current leg
             for mode in MODES:
                 t, c, e = leg_stats(km, mode, tonnes)
                 score = (w_co2 * e / max_e) + (w_cost * c / max_c) + (w_speed * t / max_t)
@@ -102,6 +114,13 @@ def plan_route(src, dst, tonnes, w_co2, w_cost, w_speed):
                 "co2": tot_e,
                 "score": tot_score,
             }
+
+    return best
+
+
+# ==========================================
+# 3. USER INTERFACE
+# ==========================================
 
 def ask_weights():
     print("\nEnter your priorities as percentages (they must total 100).")
@@ -135,20 +154,30 @@ def main():
     src = input("From hub: ").strip().title()
     dst = input("To hub: ").strip().title()
 
-    if src not in GRAPH or dst not in GRAPH or src == dst:
-        print("Invalid hubs.")
+    if src not in GRAPH or dst not in GRAPH:
+        print(f"Error: One or both hubs not recognized. Available hubs are:\n{', '.join(hubs)}")
+        return
+    if src == dst:
+        print("Source and destination hubs cannot be identical.")
         return
 
     try:
         tonnes = float(input("Shipment weight (tonnes): "))
+        if tonnes <= 0:
+            print("Shipment weight must be greater than 0.")
+            return
     except ValueError:
-        print("Invalid shipment weight.")
+        print("Invalid shipment weight. Please enter a number.")
         return
 
     w_co2, w_cost, w_speed = ask_weights()
 
     eco = plan_route(src, dst, tonnes, w_co2, w_cost, w_speed)
-    fast = plan_route(src, dst, tonnes, 0, 0, 1)  # Speed-only baseline
+    fast = plan_route(src, dst, tonnes, 0, 0, 1)
+
+    if not eco or not fast:
+        print(f"\nNo direct or connected route found between {src} and {dst}.")
+        return
 
     show("FASTEST-ONLY PLAN (what most companies do)", fast)
     show("YOUR OPTIMIZED ECOTRANSIT PLAN", eco)
